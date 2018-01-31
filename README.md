@@ -1,4 +1,4 @@
-##Predicting Movie Review Sentiment
+## Predicting Movie Review Sentiment
 Data is from [Cornell](http://www.cs.cornell.edu/people/pabo/movie-review-data)
 
 Simple bash command to create a csv to find the paths to the text and make life easier:
@@ -6,7 +6,7 @@ Simple bash command to create a csv to find the paths to the text and make life 
 echo review_path,label > data.csv; find -name *.txt | awk -v OFS=',' '{if ($1 ~ /pos/) {print $1, 0} else {print $1, 1}}' >> data.csv
 ```
 
-###Bag of Words Model
+### Bag of Words Model
 Used a bag of words model with Gaussian Naive Bayes and SVM. Example of results from cross validation:
 ```
 -----VOCABULARY SIZE 3600-----
@@ -16,7 +16,7 @@ kernel: rbf, C: 10
 ```
 This is not bad, and can definitely be improved with more tweaking. But I want to see if deep learning will do even better.
 
-###RNN
+### RNN
 Trained this model for 30 epochs. Learning error (cross entropy loss) was around ~140 for 1500 samples was still going down. Expected loss for random guessing is 1500 * -log(0.5) ~= 1040.
 
 Accuracy on training set >95%
