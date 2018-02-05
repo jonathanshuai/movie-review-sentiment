@@ -9,6 +9,11 @@ from collections import Counter
 
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.decomposition import PCA
+
+from gensim.models import Word2Vec
 
 import torch
 import torch.autograd as autograd
@@ -22,6 +27,7 @@ N_EPOCHS = 100
 MAX_NORM = 1e1
 
 print("Processing text...")
+
 # Read in the labels and paths for reviews
 data_file = 'data.csv'
 df = pd.read_csv(data_file)
@@ -57,50 +63,37 @@ for review_path in df['review_path']:
     reviews.append(review_text)
 
 print("Finished processing text! Creating word vectors...")
+
+from gensim.models import KeyedVectors
+# load the Stanford GloVe model
+filename = 'glove.6B.100d.txt.word2vec'
+model = KeyedVectors.load_word2vec_format(filename, binary=False)
+
+X = []
+for review in reviews:
+  X.append(np.array([model.get_vector(word) for word in review if word in model.vocab]))
+
 # Split into training and testing set
 y = df['label'].values
+X_train, X_test, y_train, y_test = train_test_split(X, y)
 
-reviews_train, reviews_test, y_train, y_test = train_test_split(reviews, y)
-
-word_count = Counter('')
-for review_text in reviews_train:
-  word_count += Counter(review_text)
-
-# Get a dictiona ry of our vocabulary w/ indices
-vocabulary = {}
-for i, (w, c) in enumerate(word_count.most_common(VOCAB_SIZE - 1)):
-  vocabulary[w] = i
-
-# Turn reviews into 1-hot encoded vectors
-X_train = []
-for review in reviews_train:
-  X_train.append([vocabulary[w] if w in vocabulary else VOCAB_SIZE - 1 for w in review])
-
-X_test = []
-for review in reviews_test:
-  X_test.append([vocabulary[w] if w in vocabulary else VOCAB_SIZE - 1 for w in review])
-  
 print("Finished creating word vectors! Training RNN...")
 
 # Simple RNN
 class RNN(nn.Module):
-  def __init__(self, vocab_size, output_dim, embed_dim=256, hidden_dim=128, p=0.22):
+  def __init__(self, input_dim, output_dim, hidden_dim=128, p=0.08):
     super(RNN, self).__init__()
-    self.vocab_size = vocab_size
     self.output_dim = output_dim
-    self.embed_dim = embed_dim
     self.hidden_dim = hidden_dim
 
     self.dropout = nn.Dropout(p=p)
     self.leaky_relu = nn.LeakyReLU(0.01)
     
-    self.embeddings = nn.Embedding(vocab_size, embed_dim)
-    self.i2h = nn.Linear(embed_dim + hidden_dim, hidden_dim)
-    self.i2o = nn.Linear(embed_dim + hidden_dim, output_dim)
+    self.i2h = nn.Linear(input_dim + hidden_dim, hidden_dim)
+    self.i2o = nn.Linear(input_dim + hidden_dim, output_dim)
 
   def forward(self, word, hidden):
-    embeds = self.dropout(self.embeddings(word))    
-    combined = torch.cat((embeds, hidden), 1)
+    combined = torch.cat((word, hidden), 1)
     combined = self.leaky_relu(combined)
     hidden = self.i2h(combined)
     output = self.i2o(combined)
@@ -109,9 +102,8 @@ class RNN(nn.Module):
 
 # Train the model
 loss_function = nn.NLLLoss()
-model = RNN(VOCAB_SIZE, 2)
-optimizer = optim.SGD(model.parameters(), lr=0.0008, weight_decay=1e-2)
-
+model = RNN(100, 2)
+optimizer = optim.SGD(model.parameters(), lr=0.0008, weight_decay=1e-3)
 
 n_train_samples = len(X_train)
 # For n epochs...
@@ -126,28 +118,32 @@ for epoch in range(N_EPOCHS):
 
     # Initialize hidden layer
     hidden = autograd.Variable(torch.zeros((1, 128)))
-    word_vector = autograd.Variable(torch.LongTensor(review))
+
+    # Get the word vectors and feed them into the RNN w/ forward propagation
+    word_vector = autograd.Variable(torch.from_numpy(review))
     model.zero_grad()
     for w in range(word_vector.size()[0]):
-      output, hidden = model(word_vector[w], hidden)
+      word = word_vector[w].view(1, -1)
+      output, hidden = model(word, hidden)
     
+    # Calculate Loss
     loss = loss_function(output, autograd.Variable(torch.LongTensor([label])))
     loss.backward()
     torch.nn.utils.clip_grad_norm(model.parameters(), MAX_NORM)
     optimizer.step()
     total_loss += loss.data
+
   print(torch.norm(next(model.parameters()).grad))
   print("[epoch {}] {}".format(epoch, total_loss))
-
-#print(losses)  # The loss decreased every iteration over the training data!
 
 preds = []
 for review, label in zip(X_train, y_train):
   hidden = autograd.Variable(torch.zeros((1, 128)))
-  word_vector = autograd.Variable(torch.LongTensor(review))
+  word_vector = autograd.Variable(torch.from_numpy(review))
   model.zero_grad()
   for w in range(word_vector.size()[0]):
-    output, hidden = model(word_vector[w], hidden)
+    word = word_vector[w].view(1, -1)
+    output, hidden = model(word, hidden)
   preds.append(np.argmax(output.data.numpy()))
 
 train_accuracy = accuracy_score(preds, y_train)
@@ -155,11 +151,15 @@ train_accuracy = accuracy_score(preds, y_train)
 preds = []
 for review, label in zip(X_test, y_test):
   hidden = autograd.Variable(torch.zeros((1, 128)))
-  word_vector = autograd.Variable(torch.LongTensor(review))
+  word_vector = autograd.Variable(torch.from_numpy(review))
   model.zero_grad()
   for w in range(word_vector.size()[0]):
-    output, hidden = model(word_vector[w], hidden)
+    word = word_vector[w].view(1, -1)
+    output, hidden = model(word, hidden)
   preds.append(np.argmax(output.data.numpy()))
 
 test_accuracy = accuracy_score(preds, y_test)
+
+
+
 
